@@ -1,33 +1,43 @@
 /* =========================================================
    UNIVERSAL AI BOOK LIBRARY
+   LOCAL PDF LIBRARY
    ========================================================= */
+
 
 /* =========================================================
    PROJECT CONFIGURATION
    ========================================================= */
 
-const GITHUB_OWNER =
-  'knjiznicaui';
-
-const GITHUB_REPO =
-  'knjiznicaui.github.io';
-
 const AI_WORKER_URL =
   'https://ancient-lake-71ac.autointerviews.workers.dev';
 
-const GITHUB_BOOKS_API =
-  'https://api.github.com/repos/' +
-  GITHUB_OWNER +
-  '/' +
-  GITHUB_REPO +
-  '/contents/books';
 
-const GITHUB_RAW_BASE =
-  'https://raw.githubusercontent.com/' +
-  GITHUB_OWNER +
-  '/' +
-  GITHUB_REPO +
-  '/main/books/';
+/* =========================================================
+   LOCAL LIBRARY CONFIGURATION
+   ========================================================= */
+
+const LOCAL_BOOKS_DB_NAME =
+  'universal-ai-library-local-books-db';
+
+const LOCAL_BOOKS_DB_VERSION =
+  1;
+
+const LOCAL_BOOKS_STORE_NAME =
+  'settings';
+
+const LOCAL_BOOKS_HANDLE_KEY =
+  'books-directory-handle';
+
+let LOCAL_BOOKS_DIRECTORY_HANDLE =
+  null;
+
+let LOCAL_BOOK_FILES =
+  new Map();
+
+
+/* =========================================================
+   BOOKS
+   ========================================================= */
 
 let BOOKS = [];
 
@@ -101,6 +111,33 @@ const I18N = {
 
     unselectAll:
       'Unselect all',
+
+    chooseBooksFolder:
+      'Choose books folder',
+
+    changeBooksFolder:
+      'Change folder',
+
+    refreshBooks:
+      'Refresh books',
+
+    localBooks:
+      'Local books',
+
+    selectedFolder:
+      'Selected folder',
+
+    folderNotSelected:
+      'No books folder selected yet.',
+
+    browserNotSupported:
+      'Your browser does not support folder access. Please use Chrome or Edge.',
+
+    folderPermission:
+      'Please allow access to your books folder.',
+
+    booksLoaded:
+      'books loaded.',
 
     aiLecture:
       'AI Lecture',
@@ -255,8 +292,8 @@ const I18N = {
     noBooks:
       'No PDF books have been loaded yet.',
 
-    githubError:
-      'The library books could not be loaded from GitHub.',
+    localFolderMissing:
+      'Please choose your books folder first.',
 
     chooseAtLeastOne:
       'Please select at least one book.',
@@ -283,7 +320,13 @@ const I18N = {
       'Could not create the lecture.',
 
     articleErrorGeneric:
-      'Could not create the article.'
+      'Could not create the article.',
+
+    folderLoadError:
+      'The books folder could not be loaded.',
+
+    booksRefreshed:
+      'Books refreshed.'
 
   },
 
@@ -351,6 +394,33 @@ const I18N = {
 
     unselectAll:
       'Odznači vse',
+
+    chooseBooksFolder:
+      'Izberi mapo knjig',
+
+    changeBooksFolder:
+      'Spremeni mapo',
+
+    refreshBooks:
+      'Osveži knjige',
+
+    localBooks:
+      'Lokalne knjige',
+
+    selectedFolder:
+      'Izbrana mapa',
+
+    folderNotSelected:
+      'Mapa s knjigami še ni izbrana.',
+
+    browserNotSupported:
+      'Tvoj brskalnik ne podpira dostopa do map. Uporabi Chrome ali Edge.',
+
+    folderPermission:
+      'Dovoli dostop do izbrane mape s knjigami.',
+
+    booksLoaded:
+      'knjig naloženih.',
 
     aiLecture:
       'AI predavanje',
@@ -505,8 +575,8 @@ const I18N = {
     noBooks:
       'Zaenkrat ni naloženih PDF knjig.',
 
-    githubError:
-      'Knjig iz GitHuba ni bilo mogoče naložiti.',
+    localFolderMissing:
+      'Najprej izberi mapo s knjigami.',
 
     chooseAtLeastOne:
       'Najprej izberi vsaj eno knjigo.',
@@ -533,7 +603,13 @@ const I18N = {
       'Predavanja ni bilo mogoče ustvariti.',
 
     articleErrorGeneric:
-      'Članka ni bilo mogoče ustvariti.'
+      'Članka ni bilo mogoče ustvariti.',
+
+    folderLoadError:
+      'Mape s knjigami ni bilo mogoče naložiti.',
+
+    booksRefreshed:
+      'Knjige so osvežene.'
 
   }
 
@@ -649,7 +725,10 @@ let state = {
     [],
 
   bookmarks:
-    []
+    [],
+
+  localFolderName:
+    ''
 
 };
 
@@ -759,149 +838,544 @@ function t(key) {
 
 
 /* =========================================================
-   PDF URL
+   LOCAL BOOK DATABASE
    ========================================================= */
 
-function githubRawPdfUrl(filename) {
+function openLocalBooksDatabase() {
 
-  return (
-    GITHUB_RAW_BASE +
-    encodeURIComponent(filename)
+  return new Promise(
+    (
+      resolve,
+      reject
+    ) => {
+
+      if (
+        !(
+          'indexedDB' in
+          window
+        )
+      ) {
+
+        reject(
+          new Error(
+            'IndexedDB is not supported.'
+          )
+        );
+
+        return;
+
+      }
+
+      const request =
+        indexedDB.open(
+          LOCAL_BOOKS_DB_NAME,
+          LOCAL_BOOKS_DB_VERSION
+        );
+
+      request.onupgradeneeded =
+        function () {
+
+          const db =
+            request.result;
+
+          if (
+            !db.objectStoreNames.contains(
+              LOCAL_BOOKS_STORE_NAME
+            )
+          ) {
+
+            db.createObjectStore(
+              LOCAL_BOOKS_STORE_NAME
+            );
+
+          }
+
+        };
+
+      request.onsuccess =
+        function () {
+
+          resolve(
+            request.result
+          );
+
+        };
+
+      request.onerror =
+        function () {
+
+          reject(
+            request.error ||
+            new Error(
+              'Local books database error.'
+            )
+          );
+
+        };
+
+    }
   );
 
 }
 
 
+function saveLocalBooksDirectoryHandle(
+  handle
+) {
+
+  return openLocalBooksDatabase()
+    .then(
+      db => {
+
+        return new Promise(
+          (
+            resolve,
+            reject
+          ) => {
+
+            const transaction =
+              db.transaction(
+                LOCAL_BOOKS_STORE_NAME,
+                'readwrite'
+              );
+
+            const store =
+              transaction.objectStore(
+                LOCAL_BOOKS_STORE_NAME
+              );
+
+            const request =
+              store.put(
+                handle,
+                LOCAL_BOOKS_HANDLE_KEY
+              );
+
+            request.onsuccess =
+              function () {
+
+                db.close();
+                resolve();
+
+              };
+
+            request.onerror =
+              function () {
+
+                db.close();
+
+                reject(
+                  request.error
+                );
+
+              };
+
+          }
+        );
+
+      }
+    );
+
+}
+
+
+function loadSavedLocalBooksDirectoryHandle() {
+
+  return openLocalBooksDatabase()
+    .then(
+      db => {
+
+        return new Promise(
+          (
+            resolve,
+            reject
+          ) => {
+
+            const transaction =
+              db.transaction(
+                LOCAL_BOOKS_STORE_NAME,
+                'readonly'
+              );
+
+            const store =
+              transaction.objectStore(
+                LOCAL_BOOKS_STORE_NAME
+              );
+
+            const request =
+              store.get(
+                LOCAL_BOOKS_HANDLE_KEY
+              );
+
+            request.onsuccess =
+              function () {
+
+                const handle =
+                  request.result ||
+                  null;
+
+                db.close();
+
+                resolve(
+                  handle
+                );
+
+              };
+
+            request.onerror =
+              function () {
+
+                db.close();
+
+                reject(
+                  request.error
+                );
+
+              };
+
+          }
+        );
+
+      }
+    );
+
+}
+
+
 /* =========================================================
-   LOAD BOOKS FROM GITHUB
+   LOCAL BOOK PERMISSION
    ========================================================= */
 
-async function loadBooksFromGitHub() {
+async function verifyDirectoryPermission(
+  handle,
+  requestIfNeeded
+) {
+
+  if (
+    !handle
+  ) {
+
+    return false;
+
+  }
 
   try {
 
-    const response =
-      await fetch(
-        GITHUB_BOOKS_API +
-        '?_=' +
-        Date.now(),
+    if (
+      typeof handle.queryPermission ===
+      'function'
+    ) {
+
+      const permission =
+        await handle.queryPermission({
+          mode:
+            'read'
+        });
+
+      if (
+        permission ===
+        'granted'
+      ) {
+
+        return true;
+
+      }
+
+      if (
+        permission ===
+        'denied'
+      ) {
+
+        return false;
+
+      }
+
+    }
+
+    if (
+      requestIfNeeded &&
+      typeof handle.requestPermission ===
+      'function'
+    ) {
+
+      const requested =
+        await handle.requestPermission({
+          mode:
+            'read'
+        });
+
+      return (
+        requested ===
+        'granted'
+      );
+
+    }
+
+  } catch (error) {
+
+    console.warn(
+      'Could not verify folder permission.',
+      error
+    );
+
+  }
+
+  return false;
+
+}
+
+
+/* =========================================================
+   RECURSIVE LOCAL PDF SCAN
+   ========================================================= */
+
+async function collectLocalPdfFiles(
+  directoryHandle,
+  relativePath = ''
+) {
+
+  const results =
+    [];
+
+  for await (
+    const [
+      name,
+      entry
+    ]
+    of directoryHandle.entries()
+  ) {
+
+    if (
+      entry.kind ===
+      'file'
+    ) {
+
+      if (
+        /\.pdf$/i.test(
+          name
+        )
+      ) {
+
+        const path =
+          relativePath
+            ? (
+                relativePath +
+                '/' +
+                name
+              )
+            : name;
+
+        results.push({
+
+          name,
+
+          path,
+
+          handle:
+            entry
+
+        });
+
+      }
+
+    } else if (
+      entry.kind ===
+      'directory'
+    ) {
+
+      const childPath =
+        relativePath
+          ? (
+              relativePath +
+              '/' +
+              name
+            )
+          : name;
+
+      const children =
+        await collectLocalPdfFiles(
+          entry,
+          childPath
+        );
+
+      results.push(
+        ...children
+      );
+
+    }
+
+  }
+
+  return results;
+
+}
+
+
+/* =========================================================
+   BUILD BOOK OBJECTS FROM LOCAL FILES
+   ========================================================= */
+
+async function buildLocalBooksFromDirectory(
+  directoryHandle
+) {
+
+  const files =
+    await collectLocalPdfFiles(
+      directoryHandle
+    );
+
+  LOCAL_BOOK_FILES =
+    new Map();
+
+  const books =
+    [];
+
+  files.forEach(
+    fileInfo => {
+
+      const title =
+        String(
+          fileInfo.name ||
+          ''
+        ).replace(
+          /\.pdf$/i,
+          ''
+        );
+
+      const id =
+        'local-pdf-' +
+        encodeURIComponent(
+          fileInfo.path
+        );
+
+      const pdfKey =
+        'local://' +
+        fileInfo.path;
+
+      LOCAL_BOOK_FILES.set(
+        pdfKey,
+        fileInfo.handle
+      );
+
+      books.push({
+
+        id,
+
+        short:
+          title,
+
+        author:
+          '',
+
+        script:
+          'PDF',
+
+        filename:
+          fileInfo.name,
+
+        path:
+          fileInfo.path,
+
+        pdf:
+          pdfKey
+
+      });
+
+    }
+  );
+
+  books.sort(
+    (
+      a,
+      b
+    ) =>
+      String(
+        a.short ||
+        ''
+      ).localeCompare(
+        String(
+          b.short ||
+          ''
+        ),
+        undefined,
         {
-          cache:
-            'no-store',
-
-          headers: {
-            Accept:
-              'application/vnd.github+json'
-          }
+          sensitivity:
+            'base'
         }
-      );
+      )
+  );
 
-    if (!response.ok) {
+  return books;
+
+}
+
+
+/* =========================================================
+   LOAD LOCAL BOOKS
+   ========================================================= */
+
+async function loadBooksFromLocalFolder(
+  handle,
+  showMessage = false
+) {
+
+  try {
+
+    if (!handle) {
 
       throw new Error(
-        'GitHub API HTTP ' +
-        response.status
+        'No directory handle.'
       );
 
     }
 
-    const files =
-      await response.json();
-
-    if (!Array.isArray(files)) {
-
-      throw new Error(
-        'GitHub did not return a file list.'
+    const hasPermission =
+      await verifyDirectoryPermission(
+        handle,
+        false
       );
+
+    if (!hasPermission) {
+
+      if (showMessage) {
+
+        toast(
+          t('folderPermission')
+        );
+
+      }
+
+      return false;
 
     }
 
-    const pdfFiles =
-      files.filter(
-        file =>
-          file &&
-          file.type === 'file' &&
-          /\.pdf$/i.test(
-            file.name || ''
-          )
+    LOCAL_BOOKS_DIRECTORY_HANDLE =
+      handle;
+
+    const books =
+      await buildLocalBooksFromDirectory(
+        handle
       );
 
     BOOKS =
-      pdfFiles
-        .map(file => {
+      books;
 
-          const title =
-            String(
-              file.name || ''
-            ).replace(
-              /\.pdf$/i,
-              ''
-            );
-
-          return {
-
-            id:
-              'pdf-' +
-              encodeURIComponent(
-                file.name
-              ),
-
-            short:
-              title,
-
-            author:
-              '',
-
-            script:
-              'PDF',
-
-            filename:
-              file.name,
-
-            pdf:
-              file.download_url ||
-              githubRawPdfUrl(
-                file.name
-              )
-
-          };
-
-        })
-        .sort(
-          (a, b) =>
-            String(a.short || '')
-              .localeCompare(
-                String(b.short || ''),
-                undefined,
-                {
-                  sensitivity:
-                    'base'
-                }
-              )
-        );
+    state.localFolderName =
+      handle.name ||
+      '';
 
     state.sources =
       BOOKS.map(
-        (_, index) =>
+        (
+          _,
+          index
+        ) =>
           index
       );
 
-    if (BOOKS.length > 0) {
-
-      state.book =
-        Math.max(
-          0,
-          Math.min(
-            Number(state.book) || 0,
-            BOOKS.length - 1
-          )
-        );
-
-    } else {
-
-      state.book = 0;
-
-    }
+    state.book =
+      BOOKS.length
+        ? 0
+        : 0;
 
     state.searchReady =
       false;
@@ -912,34 +1386,265 @@ async function loadBooksFromGitHub() {
     state.searchIndex =
       [];
 
+    try {
+
+      await saveLocalBooksDirectoryHandle(
+        handle
+      );
+
+    } catch (error) {
+
+      console.warn(
+        'Could not save local folder handle.',
+        error
+      );
+
+    }
+
     save();
     render();
 
+    if (
+      showMessage
+    ) {
+
+      toast(
+        state.lang ===
+        'sl'
+          ? (
+              BOOKS.length +
+              ' ' +
+              t('booksRefreshed')
+            )
+          : (
+              BOOKS.length +
+              ' ' +
+              t('booksLoaded')
+            )
+      );
+
+    }
+
     console.log(
-      'Universal AI Library:',
+      'Universal AI Library: local folder loaded.',
       BOOKS.length,
-      'books loaded.'
+      'PDF books.'
     );
+
+    return true;
 
   } catch (error) {
 
     console.error(
-      'Could not load books from GitHub:',
+      'Could not load local books:',
       error
     );
 
-    BOOKS = [];
+    if (
+      showMessage
+    ) {
 
-    state.sources = [];
-    state.searchReady = false;
-    state.searchIndex = [];
+      toast(
+        t('folderLoadError')
+      );
 
-    save();
-    render();
+    }
+
+    return false;
+
+  }
+
+}
+
+
+/* =========================================================
+   CHOOSE BOOKS FOLDER
+   ========================================================= */
+
+async function chooseBooksFolder() {
+
+  if (
+    typeof window.showDirectoryPicker !==
+    'function'
+  ) {
 
     toast(
-      t('githubError')
+      t('browserNotSupported')
     );
+
+    return;
+
+  }
+
+  try {
+
+    const handle =
+      await window.showDirectoryPicker({
+
+        mode:
+          'read',
+
+        id:
+          'universal-ai-library-books'
+
+      });
+
+    const permission =
+      await verifyDirectoryPermission(
+        handle,
+        true
+      );
+
+    if (
+      !permission
+    ) {
+
+      toast(
+        t('folderPermission')
+      );
+
+      return;
+
+    }
+
+    await loadBooksFromLocalFolder(
+      handle,
+      true
+    );
+
+  } catch (error) {
+
+    if (
+      error?.name ===
+      'AbortError'
+    ) {
+
+      return;
+
+    }
+
+    console.error(
+      'Choose books folder error:',
+      error
+    );
+
+    toast(
+      t('folderLoadError')
+    );
+
+  }
+
+}
+
+
+/* =========================================================
+   REFRESH BOOKS
+   ========================================================= */
+
+async function refreshBooks() {
+
+  if (
+    !LOCAL_BOOKS_DIRECTORY_HANDLE
+  ) {
+
+    try {
+
+      LOCAL_BOOKS_DIRECTORY_HANDLE =
+        await loadSavedLocalBooksDirectoryHandle();
+
+    } catch (error) {
+
+      console.warn(
+        'Could not restore folder handle.',
+        error
+      );
+
+    }
+
+  }
+
+  if (
+    !LOCAL_BOOKS_DIRECTORY_HANDLE
+  ) {
+
+    toast(
+      t('localFolderMissing')
+    );
+
+    return;
+
+  }
+
+  const permission =
+    await verifyDirectoryPermission(
+      LOCAL_BOOKS_DIRECTORY_HANDLE,
+      true
+    );
+
+  if (
+    !permission
+  ) {
+
+    toast(
+      t('folderPermission')
+    );
+
+    return;
+
+  }
+
+  await loadBooksFromLocalFolder(
+    LOCAL_BOOKS_DIRECTORY_HANDLE,
+    true
+  );
+
+}
+
+
+/* =========================================================
+   AUTO RESTORE LOCAL FOLDER
+   ========================================================= */
+
+async function restoreLocalBooksFolder() {
+
+  try {
+
+    const handle =
+      await loadSavedLocalBooksDirectoryHandle();
+
+    if (!handle) {
+
+      render();
+      return;
+
+    }
+
+    const permission =
+      await verifyDirectoryPermission(
+        handle,
+        false
+      );
+
+    if (!permission) {
+
+      render();
+      return;
+
+    }
+
+    await loadBooksFromLocalFolder(
+      handle,
+      false
+    );
+
+  } catch (error) {
+
+    console.warn(
+      'Could not restore local books folder.',
+      error
+    );
+
+    render();
 
   }
 
@@ -1035,7 +1740,10 @@ function save() {
         state.works,
 
       bookmarks:
-        state.bookmarks
+        state.bookmarks,
+
+      localFolderName:
+        state.localFolderName
 
     };
 
@@ -1089,6 +1797,7 @@ function escapeHtml(value) {
     );
 
 }
+
 
 function escapeAttribute(value) {
 
@@ -1144,8 +1853,10 @@ function go(screen) {
   render();
 
   window.scrollTo({
-    top: 0,
-    behavior: 'smooth'
+    top:
+      0,
+    behavior:
+      'smooth'
   });
 
 }
@@ -1257,12 +1968,19 @@ function nav() {
         ]
       ]
         .map(
-          ([key, icon, label]) => `
+          (
+            [
+              key,
+              icon,
+              label
+            ]
+          ) => `
 
             <button
               type="button"
               class="${
-                state.screen === key
+                state.screen ===
+                key
                   ? 'active'
                   : ''
               }"
@@ -1337,6 +2055,124 @@ function layout(body) {
 
 
 /* =========================================================
+   LOCAL LIBRARY HEADER
+   ========================================================= */
+
+function localLibraryControls() {
+
+  return `
+
+    <div
+      class="card"
+      style="
+        margin-bottom:20px
+      ">
+
+      <div
+        style="
+          display:flex;
+          justify-content:space-between;
+          align-items:flex-start;
+          gap:12px;
+          flex-wrap:wrap
+        ">
+
+        <div>
+
+          <h3
+            style="
+              margin:0
+            ">
+
+            ${t('localBooks')}
+
+          </h3>
+
+          <div
+            class="muted"
+            style="
+              margin-top:6px;
+              line-height:1.5
+            ">
+
+            ${
+              state.localFolderName
+                ? `
+                  ${t('selectedFolder')}:
+                  <strong>
+                    ${escapeHtml(
+                      state.localFolderName
+                    )}
+                  </strong>
+                `
+                : t(
+                    'folderNotSelected'
+                  )
+            }
+
+          </div>
+
+        </div>
+
+        <div
+          style="
+            display:flex;
+            gap:8px;
+            flex-wrap:wrap
+          ">
+
+          <button
+            type="button"
+            class="chip on"
+            onclick="
+              chooseBooksFolder()
+            ">
+
+            ${
+              state.localFolderName
+                ? t(
+                    'changeBooksFolder'
+                  )
+                : t(
+                    'chooseBooksFolder'
+                  )
+            }
+
+          </button>
+
+          ${
+            state.localFolderName
+              ? `
+
+                <button
+                  type="button"
+                  class="chip"
+                  onclick="
+                    refreshBooks()
+                  ">
+
+                  ${t(
+                    'refreshBooks'
+                  )}
+
+                </button>
+
+              `
+              : ''
+          }
+
+        </div>
+
+      </div>
+
+    </div>
+
+  `;
+
+}
+
+
+/* =========================================================
    LIBRARY
    ========================================================= */
 
@@ -1355,6 +2191,8 @@ function library() {
       ${t('appTitle')}
 
     </h1>
+
+    ${localLibraryControls()}
 
     <div class="section">
 
@@ -1390,7 +2228,10 @@ function library() {
             <div class="grid">
 
               ${BOOKS.map(
-                (book, index) => `
+                (
+                  book,
+                  index
+                ) => `
 
                   <div
                     class="book"
@@ -1474,6 +2315,151 @@ function openBook(index) {
 
 
 /* =========================================================
+   OPEN LOCAL PDF
+   ========================================================= */
+
+async function openLocalPdf(
+  pdfKey,
+  popup
+) {
+
+  try {
+
+    const handle =
+      LOCAL_BOOK_FILES.get(
+        pdfKey
+      );
+
+    if (!handle) {
+
+      throw new Error(
+        'Local PDF handle not found.'
+      );
+
+    }
+
+    const file =
+      await handle.getFile();
+
+    const url =
+      URL.createObjectURL(
+        file
+      );
+
+    popup.location.href =
+      url;
+
+    setTimeout(
+      () => {
+
+        URL.revokeObjectURL(
+          url
+        );
+
+      },
+      300000
+    );
+
+  } catch (error) {
+
+    console.error(
+      'Could not open local PDF:',
+      error
+    );
+
+    try {
+
+      popup.close();
+
+    } catch (closeError) {}
+
+    toast(
+      t('folderLoadError')
+    );
+
+  }
+
+}
+
+
+/* =========================================================
+   OPEN LOCAL PDF PAGE
+   ========================================================= */
+
+async function openLocalPdfPage(
+  pdfKey,
+  page,
+  popup
+) {
+
+  try {
+
+    const handle =
+      LOCAL_BOOK_FILES.get(
+        pdfKey
+      );
+
+    if (!handle) {
+
+      throw new Error(
+        'Local PDF handle not found.'
+      );
+
+    }
+
+    const file =
+      await handle.getFile();
+
+    const url =
+      URL.createObjectURL(
+        file
+      );
+
+    popup.location.href =
+      page
+        ? (
+            url +
+            '#page=' +
+            encodeURIComponent(
+              page
+            )
+          )
+        : url;
+
+    setTimeout(
+      () => {
+
+        URL.revokeObjectURL(
+          url
+        );
+
+      },
+      300000
+    );
+
+  } catch (error) {
+
+    console.error(
+      'Could not open local PDF page:',
+      error
+    );
+
+    try {
+
+      popup.close();
+
+    } catch (closeError) {}
+
+    toast(
+      t('folderLoadError')
+    );
+
+  }
+
+}
+
+
+/* =========================================================
    OPEN PDF
    ========================================================= */
 
@@ -1486,20 +2472,68 @@ function openPdf(
     return;
   }
 
+  const popup =
+    window.open(
+      '',
+      '_blank',
+      'noopener,noreferrer'
+    );
+
+  if (!popup) {
+
+    toast(
+      state.lang ===
+      'sl'
+        ? 'Brskalnik je blokiral novo okno za PDF.'
+        : 'The browser blocked the PDF window.'
+    );
+
+    return;
+
+  }
+
+  if (
+    String(
+      file
+    ).startsWith(
+      'local://'
+    )
+  ) {
+
+    if (page) {
+
+      openLocalPdfPage(
+        file,
+        page,
+        popup
+      );
+
+    } else {
+
+      openLocalPdf(
+        file,
+        popup
+      );
+
+    }
+
+    return;
+
+  }
+
   const target =
     page
       ? (
           file +
           '#page=' +
-          encodeURIComponent(page)
+          encodeURIComponent(
+            page
+          )
         )
       : file;
 
-  window.open(
-    target,
-    '_blank',
-    'noopener,noreferrer'
-  );
+  popup.location.href =
+    target;
 
 }
 
@@ -1805,6 +2839,44 @@ async function getPdfJs() {
   }
 
   return pdfjsPromise;
+
+}
+
+
+/* =========================================================
+   GET LOCAL PDF FILE
+   ========================================================= */
+
+async function getPdfSource(
+  pdfKey
+) {
+
+  if (
+    String(
+      pdfKey
+    ).startsWith(
+      'local://'
+    )
+  ) {
+
+    const handle =
+      LOCAL_BOOK_FILES.get(
+        pdfKey
+      );
+
+    if (!handle) {
+
+      throw new Error(
+        'Local PDF file handle not found.'
+      );
+
+    }
+
+    return handle;
+
+  }
+
+  return pdfKey;
 
 }
 
@@ -2205,10 +3277,27 @@ async function buildPdfSearchIndex() {
         entryIndex
       ];
 
+    let pdfSource =
+      await getPdfSource(
+        entry.pdf
+      );
+
+    if (
+      pdfSource &&
+      typeof pdfSource.getFile ===
+      'function'
+    ) {
+
+      pdfSource =
+        await pdfSource.getFile();
+
+    }
+
     const loadingTask =
       pdfjsLib.getDocument({
-        url:
-          entry.pdf,
+
+        data:
+          await pdfSource.arrayBuffer(),
 
         enableScripting:
           false
@@ -2221,7 +3310,7 @@ async function buildPdfSearchIndex() {
     for (
       let pageNumber = 1;
       pageNumber <=
-        pdf.numPages;
+      pdf.numPages;
       pageNumber++
     ) {
 
@@ -2905,7 +3994,7 @@ function toggleLectureSource(
 
 
 /* =========================================================
-   SELECT ALL / UNSELECT ALL SOURCES
+   SELECT ALL / UNSELECT ALL
    ========================================================= */
 
 function toggleAllLectureSources() {
@@ -3654,7 +4743,6 @@ ${escapeHtml(
 )}
 </title>
 
-
 <style>
 
 * {
@@ -3807,7 +4895,6 @@ p {
 
 </head>
 
-
 <body>
 
 <main class="page">
@@ -3820,7 +4907,6 @@ p {
 
   </h1>
 
-
   <p>
 
     <strong>
@@ -3832,7 +4918,6 @@ p {
     </strong>
 
   </p>
-
 
   ${
     prompt
@@ -3856,16 +4941,13 @@ p {
       : ''
   }
 
-
   <hr>
-
 
   <article>
 
     ${contentHtml}
 
   </article>
-
 
   <section class="sources">
 
@@ -3876,7 +4958,6 @@ p {
       )}
 
     </h2>
-
 
     ${
       sourceList
@@ -3909,7 +4990,6 @@ p {
 
   </section>
 
-
   <p>
 
     <strong>
@@ -3919,7 +4999,6 @@ p {
       )}:
 
     </strong>
-
 
     ${escapeHtml(
       formatWorkDate(
@@ -3936,7 +5015,6 @@ p {
 </html>
   `.trim();
 
-
   const blob =
     new Blob(
       [
@@ -3948,12 +5026,10 @@ p {
       }
     );
 
-
   const url =
     URL.createObjectURL(
       blob
     );
-
 
   const safeName =
     title
@@ -3972,32 +5048,25 @@ p {
       .trim() ||
     'ai-book-library-work';
 
-
   const link =
     document.createElement(
       'a'
     );
 
-
   link.href =
     url;
-
 
   link.download =
     safeName +
     '.html';
 
-
   document.body.appendChild(
     link
   );
 
-
   link.click();
 
-
   link.remove();
-
 
   setTimeout(
     () => {
@@ -4009,7 +5078,6 @@ p {
     },
     1000
   );
-
 
   toast(
     state.lang ===
@@ -4037,7 +5105,6 @@ function openSavedWork(
   if (!work) {
     return;
   }
-
 
   if (
     work.type ===
@@ -4157,7 +5224,6 @@ function openSavedWork(
 
   }
 
-
   state.lectureGenerating =
     false;
 
@@ -4271,6 +5337,16 @@ async function generate() {
   render();
 
   try {
+
+    if (
+      !BOOKS.length
+    ) {
+
+      throw new Error(
+        t('localFolderMissing')
+      );
+
+    }
 
     if (
       !state.searchReady
@@ -5397,6 +6473,24 @@ function create() {
               ${t('noBooks')}
 
             </div>
+
+            <button
+              type="button"
+              class="primary"
+              style="
+                margin-top:16px
+              "
+              onclick="
+                chooseBooksFolder()
+              ">
+
+              📁
+
+              ${t(
+                'chooseBooksFolder'
+              )}
+
+            </button>
 
           </div>
 
@@ -7430,14 +8524,20 @@ window.downloadSavedWork =
 window.removeSavedWork =
   removeSavedWork;
 
+window.chooseBooksFolder =
+  chooseBooksFolder;
+
+window.refreshBooks =
+  refreshBooks;
+
+window.restoreLocalBooksFolder =
+  restoreLocalBooksFolder;
+
 window.save =
   save;
 
 window.render =
   render;
-
-window.loadBooksFromGitHub =
-  loadBooksFromGitHub;
 
 
 /* =========================================================
@@ -7446,4 +8546,4 @@ window.loadBooksFromGitHub =
 
 render();
 
-loadBooksFromGitHub();
+restoreLocalBooksFolder();
