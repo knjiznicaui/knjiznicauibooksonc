@@ -2475,8 +2475,7 @@ function openPdf(
   const popup =
     window.open(
       '',
-      '_blank',
-      'noopener,noreferrer'
+      '_blank'
     );
 
   if (!popup) {
@@ -2491,6 +2490,13 @@ function openPdf(
     return;
 
   }
+
+  try {
+
+    popup.opener =
+      null;
+
+  } catch (error) {}
 
   if (
     String(
